@@ -1,0 +1,49 @@
+{
+  "name": "mcp-readiness",
+  "version": "0.1.0",
+  "description": "Check an MCP server against the Claude Connectors Directory and ChatGPT app directory rules before you submit: tool annotations, read/write split, description hygiene, input schemas, and OAuth discovery.",
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "claude",
+    "chatgpt",
+    "oauth",
+    "linter",
+    "directory"
+  ],
+  "author": "Alijah Konikowski",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/alijahak/mcp-readiness.git"
+  },
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "mcp-readiness": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "prepare": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.0",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.4",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.3"
+  }
+}
