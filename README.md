@@ -1,5 +1,7 @@
 # mcp-readiness
 
+[![ci](https://github.com/alijahak/mcp-readiness/actions/workflows/ci.yml/badge.svg)](https://github.com/alijahak/mcp-readiness/actions/workflows/ci.yml)
+
 Check an MCP server against the **Claude Connectors Directory** and **ChatGPT app directory** rules before you submit it.
 
 It connects to your server and reads `tools/list`. It **never calls a tool**. Then it checks what reviewers check: tool titles and annotations, whether the hints match what each tool does, read/write split, description hygiene (including hidden-text tool poisoning), input schemas, and, for remote servers, the OAuth discovery chain a client walks before sign-in.
