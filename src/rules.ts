@@ -1,4 +1,6 @@
-import { classifyVerb, inferEffect, tokenize, type Effect } from "./verbs.js";
+import {
+  classifyVerb, inferDescriptionEffect, inferEffect, inferNameEffect, NO_WRITE_CLAIM, tokenize, type Effect,
+} from "./verbs.js";
 import type { Finding, Profile, RawTool, Severity, ToolRow } from "./types.js";
 
 export const REFS = {
@@ -33,14 +35,22 @@ const DIRECTIVES: Array<[RegExp, string]> = [
   [/\b(always|first)\s+(call|use|run|invoke)\s+this\s+tool\b/i, "tells the model to prefer this tool"],
   [/\bbefore\s+(using|calling|running)\s+any\s+other\s+tool/i, "tells the model to call this tool before others"],
   [/\binstead\s+of\s+(the\s+)?(other|any)\s+tools?\b/i, "steers the model away from other tools"],
-  [/\b(do\s+not|don't|never)\s+(tell|mention|reveal|inform|show)\b[^.]{0,30}\b(user|human)\b/i, "tells the model to hide something from the user"],
+  [/\b(do\s+not|don't|never)\s+(tell|mention|reveal|inform|show)\b[^.]{0,30}\b(user|human)\b/i, "instructs the model what to tell the user"],
   [/<\s*\/?\s*(important|system|instructions?|secret)\s*>/i, "contains an instruction tag"],
 ];
 
-const PROMOTION = /\b(the best|#1|number one|world'?s (best|leading|first)|revolutionary|sponsored|buy now|sign up now|limited[- ]time offer|visit our website)\b/i;
+/** Text that tells the model to act without asking the user first. */
+const SKIP_CONFIRMATION =
+  /(\b(do\s+not|don't|never)\s+(re-?ask|ask\s+(again|for\s+confirmation|the\s+user\s+to\s+confirm)|confirm|double[- ]check|wait\s+for\s+confirmation)\b|\bno\s+confirmation\s+(step|needed|required)\b|\bwithout\s+(asking|confirming|confirmation)\b)/i;
 
-// Zero-width and invisible formatting characters, bidi controls, and Unicode tag characters (U+E0000-U+E007F).
-const HIDDEN = /[​-‏⁠-⁤﻿‪-‮⁦-⁩]|\uDB40[\uDC00-\uDC7F]|<!--/;
+// Narrow on purpose: "returns the best match" and a trading signal of "Buy now" are not advertising.
+const PROMOTION = /(#1\b|\bnumber one\b|\bworld'?s (best|leading|first)\b|\brevolutionary\b|\bsponsored\b|\bsign up (now|today)\b|\blimited[- ]time offer\b|\bvisit our (website|site)\b|\buse (promo )?code\b)/i;
+
+// Zero-width space, word joiners and invisible operators, BOM, bidi embedding/override/isolate controls
+// ("Trojan Source"), Unicode tag characters (U+E0000-U+E007F), and HTML comments. ZWJ/ZWNJ and LRM/RLM are
+// left out on purpose: emoji sequences and Persian, Arabic, Hebrew and Indic text use them legitimately.
+const HIDDEN_CHARS = /[\u200B\u2060-\u2064\uFEFF\u202A-\u202E\u2066-\u2069]/g;
+const HIDDEN = /[\u200B\u2060-\u2064\uFEFF\u202A-\u202E\u2066-\u2069]|\uDB40[\uDC00-\uDC7F]|<!--/;
 
 const SPEC_NAME = /^[A-Za-z0-9_.-]{1,128}$/;
 
@@ -67,9 +77,9 @@ function clip(s: string, n = 120): string {
 }
 
 function visible(s: string): string {
-  return s.replace(/[​-‏⁠-⁤﻿‪-‮⁦-⁩]/g, (c) =>
-    `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`,
-  );
+  return s
+    .replace(HIDDEN_CHARS, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`)
+    .replace(/\uDB40[\uDC00-\uDC7F]/g, (pair) => `\\u{${pair.codePointAt(0)?.toString(16)}}`);
 }
 
 export function checkTools(tools: RawTool[], profiles: Iterable<Profile>): { findings: Finding[]; rows: ToolRow[] } {
@@ -99,10 +109,19 @@ export function checkTools(tools: RawTool[], profiles: Iterable<Profile>): { fin
       }
     }
     const inferred = inferEffect(name, description);
+    const evidence: Evidence = {
+      effect: inferred.effect,
+      verb: inferred.verb,
+      nameEffect: inferNameEffect(name).effect,
+      descriptionEffect: inferDescriptionEffect(description).effect,
+      claimsNoWrite: description !== undefined && NO_WRITE_CLAIM.test(description),
+    };
 
     checkNaming(ctx, name, label);
-    checkAnnotations(ctx, label, title, hints, inferred.effect, inferred.verb);
-    checkDescriptions(ctx, tool, label, description);
+    checkAnnotations(ctx, label, title, hints, evidence);
+    // Read-only tools run without confirmation anyway, so "without asking" text only matters elsewhere.
+    const readsOnly = hints.readOnlyHint === true || evidence.effect === "read";
+    checkDescriptions(ctx, tool, label, description, readsOnly);
     checkSchema(ctx, tool, label);
 
     rows.push({
@@ -150,14 +169,26 @@ function checkNaming(ctx: Ctx, name: string, label: string): void {
   }
 }
 
+/** What the name and description say a tool does, kept separate so a mismatch can be weighed. */
+interface Evidence {
+  effect: Effect;
+  verb?: string;
+  nameEffect: Effect;
+  descriptionEffect: Effect;
+  /** The description says outright that the tool changes nothing ("writes nothing", "read-only"). */
+  claimsNoWrite: boolean;
+}
+
+const CHANGES = new Set<Effect>(["write", "send", "destructive"]);
+
 function checkAnnotations(
   ctx: Ctx,
   label: string,
   title: string | undefined,
   hints: Partial<Record<HintName, boolean>>,
-  effect: Effect,
-  verb: string | undefined,
+  ev: Evidence,
 ): void {
+  const { effect, verb } = ev;
   if (!title) {
     add(ctx, {
       ruleId: "ANN001", severity: "error", profile: "claude", tool: label,
@@ -188,11 +219,17 @@ function checkAnnotations(
     });
   }
 
-  if (hints.readOnlyHint === true) {
-    if (effect === "write" || effect === "send" || effect === "destructive") {
+  if (hints.readOnlyHint === true && !ev.claimsNoWrite) {
+    if (CHANGES.has(effect)) {
+      // An error needs two independent signals: the name and the description both describe a change.
+      // One signal alone ("start_assessment" that only returns a URL) is a question for a human.
+      const corroborated = CHANGES.has(ev.nameEffect) && CHANGES.has(ev.descriptionEffect);
+      const what = effect === "write" ? "changes data" : effect === "send" ? "sends or transacts" : "deletes or cancels";
       add(ctx, {
-        ruleId: "ANN010", severity: "error", profile: "core", tool: label,
-        message: `Marked readOnlyHint: true, but the name says it ${effect === "write" ? "changes data" : effect === "send" ? "sends or transacts" : "deletes or cancels"}. Claude can run read-only tools without asking the user.`,
+        ruleId: "ANN010", severity: corroborated ? "error" : "warning", profile: "core", tool: label,
+        message: corroborated
+          ? `Marked readOnlyHint: true, but both the name and the description say it ${what}. Claude can run read-only tools without asking the user.`
+          : `Marked readOnlyHint: true, but the ${ev.nameEffect !== "unknown" ? "name" : "description"} suggests it ${what}. Confirm it really changes nothing.`,
         evidence: `verb: ${verb}`, reference: REFS.claudeReview,
       });
     } else if (effect === "exec") {
@@ -202,23 +239,27 @@ function checkAnnotations(
         evidence: `verb: ${verb}`, reference: REFS.claudeReview,
       });
     }
-    if (hints.destructiveHint === true) {
-      add(ctx, {
-        ruleId: "ANN013", severity: "warning", profile: "core", tool: label,
-        message: "readOnlyHint: true together with destructiveHint: true is contradictory. destructiveHint only applies when readOnlyHint is false.",
-        reference: REFS.mcpTools,
-      });
-    }
+  }
+  if (hints.readOnlyHint === true && hints.destructiveHint === true) {
+    add(ctx, {
+      ruleId: "ANN013", severity: "warning", profile: "core", tool: label,
+      message: "readOnlyHint: true together with destructiveHint: true is contradictory. destructiveHint only applies when readOnlyHint is false.",
+      reference: REFS.mcpTools,
+    });
   }
 
-  if (effect === "destructive" && hints.destructiveHint === false) {
+  // The description gets a veto: "send_case_mail" that only drafts a message ("Write a CaseMail message ...
+  // and return a link the user opens to send it") is not a send.
+  const contradicted = (e: Effect) => ev.descriptionEffect !== "unknown" && ev.descriptionEffect !== e;
+
+  if (effect === "destructive" && hints.destructiveHint === false && !contradicted("destructive") && !ev.claimsNoWrite) {
     add(ctx, {
       ruleId: "ANN011", severity: "warning", profile: "core", tool: label,
       message: "The name says it deletes, cancels or overwrites, but destructiveHint is false, so clients may skip the confirmation.",
       evidence: `verb: ${verb}`, reference: REFS.chatgptSubmission,
     });
   }
-  if (effect === "send" && hints.destructiveHint === false) {
+  if (effect === "send" && hints.destructiveHint === false && !contradicted("send") && !ev.claimsNoWrite) {
     add(ctx, {
       ruleId: "ANN015", severity: "warning", profile: "chatgpt", tool: label,
       message: "ChatGPT's guidelines count irreversible sends and transactions as destructive, but destructiveHint is false.",
@@ -234,7 +275,7 @@ function checkAnnotations(
   }
 }
 
-function checkDescriptions(ctx: Ctx, tool: RawTool, label: string, description: string | undefined): void {
+function checkDescriptions(ctx: Ctx, tool: RawTool, label: string, description: string | undefined, readsOnly: boolean): void {
   if (!description || description.trim().length < 20) {
     add(ctx, {
       ruleId: "DSC001", severity: "warning", profile: "core", tool: label,
@@ -258,6 +299,14 @@ function checkDescriptions(ctx: Ctx, tool: RawTool, label: string, description: 
       });
     }
     if (where === "name") continue;
+    const skip = readsOnly ? null : SKIP_CONFIRMATION.exec(text);
+    if (skip) {
+      add(ctx, {
+        ruleId: "DSC005", severity: "warning", profile: "core", tool: label,
+        message: `Text in ${where} tells the model to act without asking the user. Clients rely on the model and the hints to get consent, so check that this tool's hints still make the client confirm.`,
+        evidence: clip(skip[0]), reference: REFS.claudeReview,
+      });
+    }
     for (const [re, why] of DIRECTIVES) {
       const m = re.exec(text);
       if (m) {
@@ -278,6 +327,15 @@ function checkDescriptions(ctx: Ctx, tool: RawTool, label: string, description: 
       });
     }
   }
+}
+
+/** True when a property schema can hold free text (string-typed, or untyped). Enums of fixed values can't carry a secret. */
+function acceptsText(prop: unknown): boolean {
+  if (!isObject(prop)) return true;
+  if (Array.isArray(prop.enum)) return false;
+  const t = prop.type;
+  if (t === undefined) return true;
+  return t === "string" || (Array.isArray(t) && t.includes("string"));
 }
 
 function propertyDescriptions(schema: unknown): Array<[string, string]> {
@@ -311,13 +369,14 @@ function checkSchema(ctx: Ctx, tool: RawTool, label: string): void {
     });
   }
 
-  for (const [key] of entries) {
+  for (const [key, prop] of entries) {
     const norm = key.toLowerCase().replace(/[^a-z0-9]/g, "");
     const hit = RESTRICTED_SUFFIXES.find((s) => norm === s || norm.endsWith(s));
-    if (hit) {
+    // `require_secret: boolean` is a setting, not a secret: only free-text values can carry the data.
+    if (hit && acceptsText(prop)) {
       add(ctx, {
         ruleId: "SCH003", severity: "error", profile: "chatgpt", tool: label,
-        message: "Asks the model for restricted data. ChatGPT apps must never request credentials, API keys, payment card data or government IDs; use OAuth or server-side configuration instead.",
+        message: "Parameter name suggests it asks for restricted data. ChatGPT apps must never request credentials, API keys, payment card data or government IDs; use OAuth or server-side configuration instead.",
         evidence: `parameter: ${key}`, reference: REFS.chatgptSubmission,
       });
     }

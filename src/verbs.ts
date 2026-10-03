@@ -15,7 +15,7 @@ const DESTRUCTIVE = [
 
 // ...and irreversible sends and transactions.
 const SEND = [
-  "send", "publish", "pay", "submit", "broadcast", "notify", "buy", "sell",
+  "send", "publish", "pay", "broadcast", "notify", "buy", "sell",
   // also nouns, so they only count when they lead the name (see AMBIGUOUS)
   "post", "email", "message", "tweet", "dm", "reply", "invite", "order", "purchase", "transfer", "charge", "refund",
 ];
@@ -23,7 +23,7 @@ const SEND = [
 const WRITE = [
   "create", "add", "insert", "update", "edit", "modify", "patch", "put", "set", "write", "save",
   "archive", "unarchive", "move", "rename", "copy", "close", "reopen", "assign", "unassign", "approve",
-  "reject", "grant", "start", "stop", "restart", "rollback", "install", "enable", "disable", "subscribe",
+  "reject", "grant", "start", "stop", "restart", "rollback", "install", "enable", "disable", "subscribe", "submit",
   "follow", "unfollow", "like", "unstar", "replace", "upsert", "register", "unregister", "unlock", "unblock",
   "mute", "unmute", "unpin", "toggle", "increment", "decrement", "attach", "detach", "unlink", "unshare",
   "reorder", "fill", "click", "upload",
@@ -34,7 +34,8 @@ const WRITE = [
   "push",
 ];
 
-const EXEC = ["execute", "exec", "run", "invoke", "eval", "evaluate", "call"];
+// "evaluate" is deliberately absent: "Evaluates a math expression" is a pure computation, not code execution.
+const EXEC = ["execute", "exec", "run", "invoke", "eval", "call"];
 
 const READ = [
   "get", "list", "search", "find", "fetch", "read", "query", "describe", "show", "lookup", "look",
@@ -51,7 +52,13 @@ const AMBIGUOUS = new Set([
   "merge", "deploy", "import", "sign", "scale", "vote", "link", "tag", "react", "mark", "book", "fork",
   "complete", "navigate", "press", "drag", "apply", "configure", "provision", "migrate", "rotate", "type",
   "select", "status", "info", "stat", "head", "tail", "download", "export", "diff", "screenshot", "snapshot",
-  "upload", "push",
+  "upload", "push", "fill",
+]);
+
+/** A description that starts "Charge le guide..." is French, not a payment: skip the description fallback. */
+const NON_ENGLISH_SECOND_WORD = new Set([
+  "le", "la", "les", "des", "du", "un", "une", "el", "los", "las", "der", "die", "das", "den", "dem", "ein",
+  "eine", "il", "lo", "gli", "het", "een", "uma", "um", "del", "al", "et", "y", "und",
 ]);
 
 const CONNECTORS = new Set(["or", "and", "then"]);
@@ -103,18 +110,32 @@ const RANK: Record<Effect, number> = { destructive: 5, send: 4, write: 3, exec: 
  * of the description ("Creates a ..."). Otherwise unknown.
  */
 export function inferEffect(name: string, description?: string): InferredEffect {
-  const fromName = inferFromTokens(tokenize(name).slice(0, 4));
-  if (fromName.effect !== "unknown") return { ...fromName, source: "name" };
-
-  if (description) {
-    const first = description.trim().split(/\s+/)[0]?.replace(/[^A-Za-z]/g, "");
-    if (first) {
-      const effect = classifyVerb(first);
-      if (effect !== "unknown") return { effect, verb: first.toLowerCase(), source: "description" };
-    }
-  }
-  return { effect: "unknown" };
+  const fromName = inferNameEffect(name);
+  if (fromName.effect !== "unknown") return fromName;
+  return inferDescriptionEffect(description);
 }
+
+export function inferNameEffect(name: string): InferredEffect {
+  const fromName = inferFromTokens(tokenize(name).slice(0, 4));
+  return fromName.effect === "unknown" ? fromName : { ...fromName, source: "name" };
+}
+
+/** The first word of an English description, if it is a known verb ("Creates a ticket", "Lists orders"). */
+export function inferDescriptionEffect(description?: string): InferredEffect {
+  if (!description) return { effect: "unknown" };
+  const words = description.trim().split(/\s+/);
+  const first = words[0]?.replace(/[^A-Za-z]/g, "");
+  const second = words[1]?.toLowerCase().replace(/[^a-z]/g, "");
+  if (!first || (second && NON_ENGLISH_SECOND_WORD.has(second))) return { effect: "unknown" };
+  // "Returns ..." opens most read-tool descriptions. Not in the name lexicon: `return_order` is a write.
+  if (stem(first) === "return") return { effect: "read", verb: first.toLowerCase(), source: "description" };
+  const effect = classifyVerb(first);
+  return effect === "unknown" ? { effect } : { effect, verb: first.toLowerCase(), source: "description" };
+}
+
+/** Descriptions that explicitly say the tool changes nothing ("this tool writes nothing", "performs no external write"). */
+export const NO_WRITE_CLAIM =
+  /\b(writes? nothing|performs no\b[^.]{0,40}\bwrite|no (external )?(write|side[- ]effect)s?\b|does(n't| not) (modify|change|write|create|store|persist|send)\b|read[- ]only\b|without (making|any) changes)/i;
 
 function inferFromTokens(tokens: string[]): InferredEffect {
   const verbs = tokens
@@ -122,15 +143,14 @@ function inferFromTokens(tokens: string[]): InferredEffect {
     .filter((v) => v.effect !== "unknown");
   if (verbs.length === 0) return { effect: "unknown" };
 
-  if (tokens.some((t) => CONNECTORS.has(t))) {
-    const strongest = verbs.reduce((a, b) => (RANK[b.effect] > RANK[a.effect] ? b : a));
-    return { effect: strongest.effect, verb: strongest.t };
-  }
-
   const firstClear = verbs.find((v) => !v.ambiguous);
-  if (firstClear) return { effect: firstClear.effect, verb: firstClear.t };
+  const primary = firstClear ?? verbs.find((v) => v.i === 0);
 
-  const leading = verbs.find((v) => v.i === 0);
-  if (leading) return { effect: leading.effect, verb: leading.t };
-  return { effect: "unknown" };
+  // `get_or_create`, `search_and_replace`: the verb right after a connector competes with the primary one.
+  // Only that position counts, so the noun in `check_label_and_packaging` stays a noun.
+  const afterConnector = verbs.filter((v) => v.i > 0 && CONNECTORS.has(tokens[v.i - 1] ?? ""));
+  const candidates = [...(primary ? [primary] : []), ...afterConnector];
+  if (candidates.length === 0) return { effect: "unknown" };
+  const strongest = candidates.reduce((a, b) => (RANK[b.effect] > RANK[a.effect] ? b : a));
+  return { effect: strongest.effect, verb: strongest.t };
 }

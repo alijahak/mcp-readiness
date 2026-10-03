@@ -2,3 +2,6 @@ node_modules/
 dist/
 *.log
 scans/**/raw/
+scans/2026-10/registry-snapshot.json
+scans/2026-10/remote-results.json
+scans/2026-10/public-tools.json

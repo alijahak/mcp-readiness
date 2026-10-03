@@ -1,0 +1,110 @@
+{
+  "scannedAt": "2026-10-03T06:27:09.347Z",
+  "registryFetchedAt": "2026-10-03T06:26:21.678Z",
+  "eligible": 20825,
+  "sampled": 200,
+  "byStatus": {
+    "401": 59,
+    "403": 1,
+    "public-2xx": 120,
+    "404-405": 7,
+    "network-error": 7,
+    "5xx": 6
+  },
+  "auth": {
+    "protected": 60,
+    "resourceMetadataInHeader": "52 (87%)",
+    "prmFoundAnywhere": "53 (88%)",
+    "prmResourceExactMatch": "45 of 53",
+    "asMetadataFound": "52 (87%)",
+    "s256Advertised": "52 of 52",
+    "dcr": "49 of 52",
+    "cimd": "20 of 52",
+    "dcrOrCimd": "50 of 52",
+    "refreshGrantListed": "50 of 52 that list grants",
+    "passesEveryClaudeAuthCheck": "43 (72%)",
+    "ruleCounts": {
+      "AUT001:error": 7,
+      "AUT002:error": 7,
+      "AUT003:error": 8,
+      "AUT004:error": 1,
+      "AUT006:warning": 2,
+      "AUT007:warning": 2,
+      "AUT010:error": 1,
+      "AUT012:warning": 1
+    }
+  },
+  "tools": {
+    "publicServersListed": 119,
+    "publicServersWithTools": 119,
+    "toolsChecked": 1272,
+    "toolsWithTitle": "901 (71%)",
+    "toolsWithReadOnlyOrDestructive": "865 (68%)",
+    "toolsWithAllThreeChatgptHints": "529 (42%)",
+    "serversWithNoClaudeErrors": "56 of 119",
+    "serversWithNoChatgptErrors": "44 of 119",
+    "serversWithNoErrorsAnyProfile": "37 of 119",
+    "rules": {
+      "ANN001": {
+        "servers": 36,
+        "tools": 371
+      },
+      "ANN002": {
+        "servers": 54,
+        "tools": 407
+      },
+      "ANN003": {
+        "servers": 71,
+        "tools": 743
+      },
+      "ANN010": {
+        "servers": 3,
+        "tools": 4
+      },
+      "ANN011": {
+        "servers": 2,
+        "tools": 2
+      },
+      "ANN012": {
+        "servers": 59,
+        "tools": 241
+      },
+      "ANN015": {
+        "servers": 3,
+        "tools": 5
+      },
+      "DSC001": {
+        "servers": 1,
+        "tools": 2
+      },
+      "DSC002": {
+        "servers": 1,
+        "tools": 1
+      },
+      "DSC005": {
+        "servers": 1,
+        "tools": 1
+      },
+      "SCH002": {
+        "servers": 56,
+        "tools": 318
+      },
+      "SCH003": {
+        "servers": 6,
+        "tools": 117
+      },
+      "SPL001": {
+        "servers": 4,
+        "tools": 5
+      }
+    },
+    "inferredEffects": {
+      "read": 751,
+      "write": 118,
+      "destructive": 17,
+      "send": 13,
+      "exec": 17,
+      "unknown": 356
+    }
+  }
+}

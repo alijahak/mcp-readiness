@@ -51,6 +51,13 @@ describe("inferEffect", () => {
     expect(effect("archive_or_delete")).toBe("destructive");
   });
 
+  it("regressions from the 2026-10 registry scan", () => {
+    expect(effect("check_label_and_packaging")).toBe("read"); // "label" is a noun here
+    expect(effect("polymarket_fill_risk")).toBe("unknown"); // "fill" is a trading noun
+    expect(effect("guide_paracha", "Charge le guide de la paracha de la semaine.")).toBe("unknown"); // French
+    expect(effect("calculate", "Evaluates a math expression.")).toBe("unknown"); // computation, not code execution
+  });
+
   it("falls back to the first word of the description", () => {
     expect(effect("tickets", "Deletes a ticket.")).toBe("destructive");
     expect(effect("tickets", "Lists tickets.")).toBe("read");

@@ -1,6 +1,6 @@
 {
   "name": "mcp-readiness",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Check an MCP server against the Claude Connectors Directory and ChatGPT app directory rules before you submit: tool annotations, read/write split, description hygiene, input schemas, and OAuth discovery.",
   "keywords": [
     "mcp",

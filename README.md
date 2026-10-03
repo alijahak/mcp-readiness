@@ -13,8 +13,8 @@ Verdict
   MCP spec and hygiene         not ready (2 errors, 1 warning, 1 info)
 
 Findings
-  ERROR   ANN010 [core] create_ticket: Marked readOnlyHint: true, but the name says it changes data.
-          Claude can run read-only tools without asking the user.
+  ERROR   ANN010 [core] create_ticket: Marked readOnlyHint: true, but both the name and the description
+          say it changes data. Claude can run read-only tools without asking the user.
           evidence: verb: create
   ERROR   SPL001 [claude] api_request: One tool does both reads and writes, selected by "method".
           evidence: method: GET | POST | DELETE
@@ -78,7 +78,7 @@ Each finding links to the published requirement it comes from.
 | ANN003 | error | ChatGPT | `readOnlyHint`, `destructiveHint` and `openWorldHint` are all explicit booleans |
 | ANN004 | error | core | Hints are booleans, not strings |
 | ANN005 | warning | Claude | Write tools set `destructiveHint` deliberately (the default is `true`) |
-| ANN010 | error | core | A tool whose name says create/update/delete/send is not marked `readOnlyHint: true` (warning for exec/query tools, which are read-only only if the server enforces it) |
+| ANN010 | error/warning | core | A tool that creates, updates, deletes or sends is not marked `readOnlyHint: true`. Error when the name and description both say so; warning on one signal, or for exec/query tools (read-only only if the server enforces it). A description that says the tool writes nothing suppresses it. |
 | ANN011 | warning | core | Delete/cancel/overwrite tools don't set `destructiveHint: false` |
 | ANN012 | info | core | Read tools set `readOnlyHint: true`, or Claude prompts on every call |
 | ANN013 | warning | core | `readOnlyHint: true` with `destructiveHint: true` is contradictory |
@@ -91,9 +91,10 @@ Each finding links to the published requirement it comes from.
 | DSC002 | warning | Claude | Descriptions (and parameter descriptions) don't instruct the model ("always call this tool first", `<IMPORTANT>` tags, "don't tell the user") |
 | DSC003 | error | core | No hidden text: zero-width or bidi characters, Unicode tag characters, HTML comments |
 | DSC004 | warning | Claude | No promotional language |
+| DSC005 | warning | core | No text telling the model to act without asking the user ("no confirmation step", "do not re-ask") on tools that can change something |
 | SCH001 | error | core | `inputSchema` is an object schema |
 | SCH002 | info | core | Input parameters have descriptions |
-| SCH003 | error | ChatGPT | No parameters asking for passwords, API keys, card numbers or government IDs |
+| SCH003 | error | ChatGPT | No free-text parameters asking for passwords, API keys, card numbers or government IDs |
 | AUT000 | info | core | Server accepts unauthenticated requests (fine for public data only) |
 | AUT001 | error | Claude | A 401 carries `WWW-Authenticate` with `resource_metadata` |
 | AUT002 | error | Claude | Protected resource metadata (RFC 9728) exists and lists `authorization_servers` |
@@ -116,6 +117,16 @@ Sources:
 - [RFC 9728](https://www.rfc-editor.org/rfc/rfc9728) and [RFC 8414](https://www.rfc-editor.org/rfc/rfc8414)
 
 These rules were read from those pages on 2026-09-30. Directories change their rules; open an issue if one has moved.
+
+## Real-world results
+
+[October 2026 scan of 200 servers from the official MCP Registry](scans/2026-10/README.md):
+
+- Only **31%** of public servers had no directory-blocking finding.
+- **60%** were missing ChatGPT's required hints on at least one tool.
+- **72%** of OAuth-protected servers passed every Claude auth check.
+
+The page also covers the 9 false positives the first pass produced, and how the rules changed because of them.
 
 ## What it does not check
 
